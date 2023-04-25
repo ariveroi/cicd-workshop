@@ -6,9 +6,12 @@ import * as codepipeline from 'aws-cdk-lib/aws-codepipeline'
 import * as codepipeline_actions from 'aws-cdk-lib/aws-codepipeline-actions'
 import * as ecr from 'aws-cdk-lib/aws-ecr'
 import * as iam from 'aws-cdk-lib/aws-iam'
+import * as ecsPatterns from 'aws-cdk-lib/aws-ecs-patterns';
+
 
 interface ConsumerProps extends StackProps{
     ecrRepository: ecr.Repository;
+    testAppFargateService: ecsPatterns.ApplicationLoadBalancedFargateService;
 }
 
 
@@ -37,7 +40,7 @@ export class PipelineCdkStack extends Stack{
 
         const sourceOutput = new codepipeline.Artifact();
         const unitTestOutput = new codepipeline.Artifact();
-        const docherBuildOutput = new codepipeline.Artifact();
+        const dockerBuildOutput = new codepipeline.Artifact();
 
         // Add pipeline stage and action for source control repo
         pipeline.addStage({
@@ -107,12 +110,22 @@ export class PipelineCdkStack extends Stack{
                     actionName: 'DockerBuild',
                     project: docherBuildProject,
                     input: sourceOutput,
-                    outputs: [docherBuildOutput]
+                    outputs: [dockerBuildOutput]
                 }),
             ]
         });
 
-        
+        pipeline.addStage({
+            stageName: 'Deploy-Test',
+            actions: [
+              new codepipeline_actions.EcsDeployAction({
+                actionName: 'deployECS',
+                service: props.testAppFargateService.service,
+                input: dockerBuildOutput
+              }),
+            ]
+          });   
+          
 
 
         new CfnOutput(this, 'CodeCommitRepoUrl', {
