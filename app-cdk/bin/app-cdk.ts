@@ -3,6 +3,7 @@ import 'source-map-support/register';
 import * as cdk from 'aws-cdk-lib';
 import { AppCdkStack } from '../lib/app-cdk-stack';
 import { PipelineCdkStack } from '../lib/pipeline-cdk-stack';
+import { EcrCdkStack } from '../lib/ecr-cdk-stack';
 
 const app = new cdk.App();
 new AppCdkStack(app, 'AppCdkStack', {
@@ -21,4 +22,8 @@ new AppCdkStack(app, 'AppCdkStack', {
   /* For more information, see https://docs.aws.amazon.com/cdk/latest/guide/environments.html */
 });
 
-new PipelineCdkStack(app, 'PipelineCdkStack', {})
+const ecrCdkStack = new EcrCdkStack(app, 'EcrCdkStack', {});
+
+new PipelineCdkStack(app, 'PipelineCdkStack', {
+    ecrRepository: ecrCdkStack.repository
+})

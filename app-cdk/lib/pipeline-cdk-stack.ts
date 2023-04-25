@@ -1,9 +1,19 @@
 import { Stack, StackProps, CfnOutput } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import * as codecommit from 'aws-cdk-lib/aws-codecommit'
+import * as codebuild from 'aws-cdk-lib/aws-codebuild'
+import * as codepipeline from 'aws-cdk-lib/aws-codepipeline'
+import * as codepipeline_actions from 'aws-cdk-lib/aws-codepipeline-actions'
+import * as ecr from 'aws-cdk-lib/aws-ecr'
+import * as iam from 'aws-cdk-lib/aws-iam'
+
+interface ConsumerProps extends StackProps{
+    ecrRepository: ecr.Repository;
+}
+
 
 export class PipelineCdkStack extends Stack{
-    constructor(scope: Construct, id: string, props: StackProps){
+    constructor(scope: Construct, id: string, props: ConsumerProps){
         super(scope, id, props);
 
         const sourceRepo = new codecommit.Repository(this, 'CICD_Workshop', {
@@ -11,8 +21,104 @@ export class PipelineCdkStack extends Stack{
             description: 'CICD_Workshop'
         });
 
+        const pipeline = new codepipeline.Pipeline(this, 'CICD_Pipeline', {
+            pipelineName: 'CICD_Pipeline',
+            crossAccountKeys: false,
+        });
+
+        const codeQualityBuild = new codebuild.PipelineProject(this, 'CodeQualityBuild', {
+            environment: {
+                buildImage: codebuild.LinuxBuildImage.STANDARD_5_0,
+                privileged: true,
+                computeType: codebuild.ComputeType.LARGE
+            },
+            buildSpec: codebuild.BuildSpec.fromSourceFilename('buildspec_test.yml'),
+        });
+
+        const sourceOutput = new codepipeline.Artifact();
+        const unitTestOutput = new codepipeline.Artifact();
+        const docherBuildOutput = new codepipeline.Artifact();
+
+        // Add pipeline stage and action for source control repo
+        pipeline.addStage({
+            stageName: 'Source',
+            actions: [
+                new codepipeline_actions.CodeCommitSourceAction({
+                    actionName: 'CodeCommit_Source',
+                    repository: sourceRepo,
+                    output: sourceOutput,
+                    branch: 'main'
+                })
+            ]
+        });
+
+        // Add pipeline stage and action for unit test
+        pipeline.addStage({
+            stageName: 'UnitTest',
+            actions: [
+                new codepipeline_actions.CodeBuildAction({
+                    actionName: 'UnitTest',
+                    project: codeQualityBuild,
+                    input: sourceOutput,
+                    outputs: [unitTestOutput]
+                })
+            ]
+        });
+
+        const docherBuildProject = new codebuild.PipelineProject(this, 'DockerBuildProject', {
+            environmentVariables:{
+                'IMAGE_TAG': {value: 'latest'},
+                'IMAGE_REPO_URI': {value: props.ecrRepository.repositoryUri},
+                'AWS_DEFAULT_REGION': {value: process.env.CDK_DEFAULT_REGION}
+            },
+            environment: {
+                buildImage: codebuild.LinuxBuildImage.STANDARD_5_0,
+                privileged: true,
+                computeType: codebuild.ComputeType.LARGE
+            },
+            buildSpec: codebuild.BuildSpec.fromSourceFilename('buildspec_docker.yml'),
+        });
+
+        const dockerBuildRolePolicy = new iam.PolicyStatement({
+            effect: iam.Effect.ALLOW,
+            resources: ['*'],
+            actions: [
+                "ecr:GetAuthorizationToken",
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:GetRepositoryPolicy",
+                "ecr:DescribeRepositories",
+                "ecr:ListImages",
+                "ecr:DescribeImages",
+                "ecr:BatchGetImage",
+                "ecr:InitiateLayerUpload",
+                "ecr:UploadLayerPart",
+                "ecr:CompleteLayerUpload",
+                "ecr:PutImage"
+            ]
+        });
+
+        docherBuildProject.addToRolePolicy(dockerBuildRolePolicy);
+
+        pipeline.addStage({
+            stageName: 'Docker-Push-ECR',
+            actions: [
+                new codepipeline_actions.CodeBuildAction({
+                    actionName: 'DockerBuild',
+                    project: docherBuildProject,
+                    input: sourceOutput,
+                    outputs: [docherBuildOutput]
+                }),
+            ]
+        });
+
+        
+
+
         new CfnOutput(this, 'CodeCommitRepoUrl', {
             value: sourceRepo.repositoryCloneUrlHttp
         });
+
+
     }
 }
